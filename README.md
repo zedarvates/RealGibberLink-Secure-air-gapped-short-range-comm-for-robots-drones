@@ -1,8 +1,16 @@
-# Short-range-real-Gibberlink
-# Real-Gibberlink — short-range secure handshake (audio + visual)
+# RealGibber - Secure Directional Communication Protocol Suite
 
-# Real-GibberLink: Secure Directional Communication Protocol
+[![Rust](https://img.shields.io/badge/rust-1.70+-000000.svg?style=for-the-badge&logo=rust)](https://www.rust-lang.org/)
+[![Android](https://img.shields.io/badge/android-11+-3DDC84.svg?style=for-the-badge&logo=android)](https://developer.android.com/)
+[![Python](https://img.shields.io/badge/python-3.8+-3776AB.svg?style=for-the-badge&logo=python)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
+
+A comprehensive suite of secure directional communication protocols for autonomous drone operations, industrial automation, and autonomous vehicle coordination.
+
+
 ![Marketing illustration](1_reflections/Marketing%20illustratiV1.1.png)
+
+
 ### Purpose
 Expose the limits of theatrical "AI sound languages" and provide a robust, verifiable alternative with ultra-short-range pairing (100-300ms) and long-range directional communication (10-200m) using coupled audio-visual-laser channels for enhanced security and reliability.
 Contactless, no mechanical wear
@@ -48,46 +56,73 @@ RGibberLink implements secure, short-range pairing protocols and long-range dire
 - **Security Manager**: Permission-based access with peer trust assessment
 - **Signed Logging**: Tamper-evident session logs with Ed25519 signatures
 
-## Installation
+## 🚀 Quick Start
 
-### Dependencies
-- **Rust**: `cargo` (1.70+)
-- **Python**: 3.8+ with `pip` for benchmarking
-- **Android SDK/NDK**: For mobile app (Android Studio)
+### Prerequisites
+- Rust 1.70+
+- Android SDK/NDK (for Android builds)
+- Python 3.8+ (for bindings)
 
-### Building the Core Library
+### Installation
 ```bash
+# Clone the repository
+git clone https://github.com/your-org/realgibber.git
+cd realgibber
+
+# Build the core library
 cd rgibberlink-core
-cargo build --release                    # Release build
-cargo build --release --features python  # With Python bindings
+cargo build --release
+
+# Run tests
+cargo test
 ```
 
-### Python Bench Tools
-```bash
-cd tests/
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
+## 📖 Documentation
 
-### Android App
-```bash
-# In Android Studio
-File > Open > Rgibberlink/android-app/
-# Build and run on device with camera/microphone permissions
-```
+For comprehensive documentation, including:
+- Detailed setup instructions
+- API references
+- Architecture overview
+- Deployment guides
 
-### Testing
-Run the complete test suite:
-```bash
-python tests/run_tests.py  # Automated test runner
-# Or individual categories:
-pytest tests/ -m unit         # Unit tests
-pytest tests/ -m integration  # Integration tests
-pytest tests/ -m performance  # Performance benchmarks
-pytest tests/ -m robustness   # Robustness tests
-pytest tests/ -m security     # Security tests
-```
+Please see [`Documentations/README.md`](Documentations/README.md)
+
+## 🏗️ Key Features
+
+- **Directional Security**: Line-of-sight communication prevents eavesdropping
+- **Multi-Channel Redundancy**: Audio-visual-laser transmission for reliability
+- **Cryptographic Suite**: AES-GCM encryption with ECDH key exchange
+- **Weather Intelligence**: Dynamic protocol adaptation
+- **Formation Control**: Multi-drone coordination
+- **Audit System**: Comprehensive compliance logging
+
+## 📦 Components
+
+- `rgibberlink-core/` - Rust core library
+- `android-app/` - Android application
+- `examples/` - Usage examples
+- `tests/` - Test suites
+- `Documentations/` - Comprehensive documentation
+
+## 🤝 Contributing
+
+We welcome contributions! Please see:
+- [Contributing Guide](CONTRIBUTING.md)
+- [Detailed Contributing Guide](Documentations/CONTRIBUTING.md)
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🔒 Security
+
+For security-related issues, please email security@realgibber.com (do not use public issues).
+
+---
+
+**Built with ❤️ for the future of secure autonomous systems**
+
+*RealGibber - Where directional security meets autonomous coordination*
 
 ## Performance Targets
 - **Complete Handshake**: <300ms (target: 100-300ms)
