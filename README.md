@@ -139,4 +139,13 @@ This project critiques ideas with evidence. It avoids personal attacks or defama
 ### License
 GPL/AGPL
 
+# Short-Range Real Gibberlink
+> Secure multimodal protocol for short-range communication
+
+## Features
+- 🔒 #security
+- 🎵 #audio-visual
+- 📡 #short-range
+- 🧩 #modular
+
 
