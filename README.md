@@ -18,7 +18,7 @@ Use Cases  EVs, Drones, robots and Autonomous Charging Systems, Warehouse, Confi
 
 ## Architecture
 
-GibberLink implements secure, short-range pairing protocols and long-range directional communication systems:
+RGibberLink implements secure, short-range pairing protocols and long-range directional communication systems:
 
 ### Short-Range Protocol (Ultra-Short Range, 0-5m)
 - **Ultrasonic Burst**: FSK-modulated audio (18-22 kHz) for synchronization and anti-replay protection
@@ -33,7 +33,7 @@ GibberLink implements secure, short-range pairing protocols and long-range direc
 - **Adaptive ECC**: Convolutional + Reed-Solomon codes adapting to atmospheric conditions
 
 ### Core Components
-- **Rust Core Library** (`gibberlink-core`): Crypto engines, protocol state machine, modulation handlers
+- **Rust Core Library** (`rgibberlink-core`): Crypto engines, protocol state machine, modulation handlers
 - **Android App** (Kotlin): Camera/microphone/laser integration with JNI C++ bridge
 - **Python Bench Tools**: Latency, BER, ECC effectiveness testing (pytest-based)
 - **Cross-Platform Support**: Linux/Android/Windows with fallback mechanisms
@@ -55,7 +55,7 @@ GibberLink implements secure, short-range pairing protocols and long-range direc
 
 ### Building the Core Library
 ```bash
-cd gibberlink-core
+cd rgibberlink-core
 cargo build --release                    # Release build
 cargo build --release --features python  # With Python bindings
 ```
