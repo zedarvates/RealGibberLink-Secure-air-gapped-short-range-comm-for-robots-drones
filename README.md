@@ -66,7 +66,8 @@ RGibberLink implements secure, short-range pairing protocols and long-range dire
 ### Installation
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/realgibber.git
+git clone https://github.com/zedarvates/short-range-real-gibberlink.git
+
 cd realgibber
 
 # Build the core library
