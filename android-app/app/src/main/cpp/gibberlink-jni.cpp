@@ -93,23 +93,185 @@ extern "C" {
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 
-// Thread safety helpers
+// Input validation macros and constants
+#define MAX_ARRAY_SIZE (1024 * 1024 * 10) // 10MB max array size
+#define MIN_TIMEOUT_MS 0
+#define MAX_TIMEOUT_MS 30000 // 30 seconds max timeout
+#define MIN_INTENSITY 0.0f
+#define MAX_INTENSITY 100.0f
+#define MIN_PRIORITY 0
+#define MAX_PRIORITY 255
+
+// Validation helper functions
+bool validate_pointer(void* ptr, const char* function_name) {
+    if (!ptr) {
+        LOGE("Null pointer validation failed in %s", function_name);
+        return false;
+    }
+    return true;
+}
+
+bool validate_byte_array(JNIEnv* env, jbyteArray array, const char* param_name, const char* function_name) {
+    if (!array) {
+        LOGE("Null byte array '%s' in %s", param_name, function_name);
+        return false;
+    }
+
+    jsize len = env->GetArrayLength(array);
+    if (len < 0) {
+        LOGE("Invalid array length for '%s' in %s: %d", param_name, function_name, len);
+        return false;
+    }
+
+    if (static_cast<size_t>(len) > MAX_ARRAY_SIZE) {
+        LOGE("Array too large for '%s' in %s: %d bytes (max: %d)", param_name, function_name, len, MAX_ARRAY_SIZE);
+        return false;
+    }
+
+    return true;
+}
+
+bool validate_float_array(JNIEnv* env, jfloatArray array, jsize expected_size, const char* param_name, const char* function_name) {
+    if (!array) {
+        LOGE("Null float array '%s' in %s", param_name, function_name);
+        return false;
+    }
+
+    jsize len = env->GetArrayLength(array);
+    if (len != expected_size) {
+        LOGE("Invalid float array size for '%s' in %s: expected %d, got %d", param_name, function_name, expected_size, len);
+        return false;
+    }
+
+    return true;
+}
+
+bool validate_long_array(JNIEnv* env, jlongArray array, jsize expected_size, const char* param_name, const char* function_name) {
+    if (!array) {
+        LOGE("Null long array '%s' in %s", param_name, function_name);
+        return false;
+    }
+
+    jsize len = env->GetArrayLength(array);
+    if (len != expected_size) {
+        LOGE("Invalid long array size for '%s' in %s: expected %d, got %d", param_name, function_name, expected_size, len);
+        return false;
+    }
+
+    return true;
+}
+
+bool validate_timeout(jint timeout_ms, const char* function_name) {
+    if (timeout_ms < MIN_TIMEOUT_MS || timeout_ms > MAX_TIMEOUT_MS) {
+        LOGE("Invalid timeout in %s: %d ms (valid range: %d-%d)", function_name, timeout_ms, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS);
+        return false;
+    }
+    return true;
+}
+
+bool validate_intensity(jfloat intensity, const char* function_name) {
+    if (intensity < MIN_INTENSITY || intensity > MAX_INTENSITY) {
+        LOGE("Invalid intensity in %s: %f (valid range: %f-%f)", function_name, intensity, MIN_INTENSITY, MAX_INTENSITY);
+        return false;
+    }
+    return true;
+}
+
+bool validate_priority(jint priority, const char* function_name) {
+    if (priority < MIN_PRIORITY || priority > MAX_PRIORITY) {
+        LOGE("Invalid priority in %s: %d (valid range: %d-%d)", function_name, priority, MIN_PRIORITY, MAX_PRIORITY);
+        return false;
+    }
+    return true;
+}
+
+bool validate_samples(jint samples, const char* function_name) {
+    if (samples <= 0 || samples > 1000) {
+        LOGE("Invalid samples count in %s: %d (valid range: 1-1000)", function_name, samples);
+        return false;
+    }
+    return true;
+}
+
+bool validate_max_attempts(jint max_attempts, const char* function_name) {
+    if (max_attempts <= 0 || max_attempts > 100) {
+        LOGE("Invalid max attempts in %s: %d (valid range: 1-100)", function_name, max_attempts);
+        return false;
+    }
+    return true;
+}
+
+bool validate_environmental_values(jfloat temperature, jfloat humidity, jfloat pressure,
+                                  jfloat wind_speed, jfloat visibility, const char* function_name) {
+    if (temperature < -100.0f || temperature > 100.0f) {
+        LOGE("Invalid temperature in %s: %f°C", function_name, temperature);
+        return false;
+    }
+    if (humidity < 0.0f || humidity > 100.0f) {
+        LOGE("Invalid humidity in %s: %f%%", function_name, humidity);
+        return false;
+    }
+    if (pressure < 800.0f || pressure > 1200.0f) {
+        LOGE("Invalid pressure in %s: %f hPa", function_name, pressure);
+        return false;
+    }
+    if (wind_speed < 0.0f || wind_speed > 100.0f) {
+        LOGE("Invalid wind speed in %s: %f m/s", function_name, wind_speed);
+        return false;
+    }
+    if (visibility < 0.0f || visibility > 50000.0f) {
+        LOGE("Invalid visibility in %s: %f m", function_name, visibility);
+        return false;
+    }
+    return true;
+}
+
+bool validate_alignment_coords(jfloat x, jfloat y, const char* function_name) {
+    if (x < -1.0f || x > 1.0f || y < -1.0f || y > 1.0f) {
+        LOGE("Invalid alignment coordinates in %s: x=%f, y=%f (valid range: -1.0 to 1.0)", function_name, x, y);
+        return false;
+    }
+    return true;
+}
+
+// Thread safety helpers with enhanced error handling
 class JNIGuard {
 private:
     std::mutex& mutex_;
     bool locked_;
+    const char* function_name_;
 
 public:
-    explicit JNIGuard(std::mutex& mutex) : mutex_(mutex), locked_(false) {
-        mutex_.lock();
-        locked_ = true;
+    explicit JNIGuard(std::mutex& mutex, const char* function_name = nullptr)
+        : mutex_(mutex), locked_(false), function_name_(function_name) {
+        try {
+            mutex_.lock();
+            locked_ = true;
+            if (function_name_) {
+                LOGI("Entered critical section for %s", function_name_);
+            }
+        } catch (const std::system_error& e) {
+            LOGE("Failed to acquire mutex lock in %s: %s", function_name_ ? function_name_ : "unknown", e.what());
+            locked_ = false;
+        }
     }
 
     ~JNIGuard() {
         if (locked_) {
-            mutex_.unlock();
+            try {
+                mutex_.unlock();
+                if (function_name_) {
+                    LOGI("Exited critical section for %s", function_name_);
+                }
+            } catch (const std::system_error& e) {
+                LOGE("Failed to release mutex lock in %s: %s", function_name_ ? function_name_ : "unknown", e.what());
+            }
         }
     }
+
+    // Prevent copying
+    JNIGuard(const JNIGuard&) = delete;
+    JNIGuard& operator=(const JNIGuard&) = delete;
 };
 
 // Global mutexes for thread safety
@@ -123,31 +285,100 @@ static std::mutex g_hardware_mutex;
 static std::atomic<jobject> g_callback_object(nullptr);
 static JavaVM* g_java_vm = nullptr;
 
-// Helper functions
+// Safer helper functions with additional validation
 jbyteArray create_byte_array(JNIEnv* env, const uint8_t* data, size_t len) {
-    if (!data || len == 0) return nullptr;
+    if (!env) {
+        LOGE("Null JNIEnv in create_byte_array");
+        return nullptr;
+    }
+    if (!data && len > 0) {
+        LOGE("Null data with non-zero length in create_byte_array");
+        return nullptr;
+    }
+    if (len == 0) {
+        LOGE("Zero length in create_byte_array");
+        return nullptr;
+    }
+    if (len > MAX_ARRAY_SIZE) {
+        LOGE("Array size %zu exceeds maximum allowed size %d in create_byte_array", len, MAX_ARRAY_SIZE);
+        return nullptr;
+    }
 
     jbyteArray result = env->NewByteArray(len);
-    if (!result) return nullptr;
+    if (!result) {
+        LOGE("Failed to create byte array of size %zu in create_byte_array", len);
+        return nullptr;
+    }
 
     env->SetByteArrayRegion(result, 0, len, reinterpret_cast<const jbyte*>(data));
+    if (env->ExceptionCheck()) {
+        LOGE("Exception occurred while setting byte array region in create_byte_array");
+        env->ExceptionClear();
+        env->DeleteLocalRef(result);
+        return nullptr;
+    }
+
     return result;
 }
 
 std::vector<uint8_t> get_byte_array_data(JNIEnv* env, jbyteArray array) {
-    if (!array) return {};
+    if (!env) {
+        LOGE("Null JNIEnv in get_byte_array_data");
+        return {};
+    }
+    if (!array) {
+        LOGE("Null array in get_byte_array_data");
+        return {};
+    }
 
     jsize len = env->GetArrayLength(array);
-    if (len <= 0) return {};
+    if (len < 0) {
+        LOGE("Negative array length %d in get_byte_array_data", len);
+        return {};
+    }
+    if (len == 0) {
+        LOGW("Empty array in get_byte_array_data");
+        return {};
+    }
+    if (static_cast<size_t>(len) > MAX_ARRAY_SIZE) {
+        LOGE("Array size %d exceeds maximum allowed size %d in get_byte_array_data", len, MAX_ARRAY_SIZE);
+        return {};
+    }
 
     std::vector<uint8_t> result(len);
     env->GetByteArrayRegion(array, 0, len, reinterpret_cast<jbyte*>(result.data()));
+    if (env->ExceptionCheck()) {
+        LOGE("Exception occurred while getting byte array region in get_byte_array_data");
+        env->ExceptionClear();
+        return {};
+    }
+
     return result;
 }
 
 jstring create_string(JNIEnv* env, const char* str) {
-    if (!str) return nullptr;
-    return env->NewStringUTF(str);
+    if (!env) {
+        LOGE("Null JNIEnv in create_string");
+        return nullptr;
+    }
+    if (!str) {
+        LOGE("Null string in create_string");
+        return nullptr;
+    }
+
+    jstring result = env->NewStringUTF(str);
+    if (!result) {
+        LOGE("Failed to create string from '%s' in create_string", str);
+        return nullptr;
+    }
+
+    if (env->ExceptionCheck()) {
+        LOGE("Exception occurred while creating string in create_string");
+        env->ExceptionClear();
+        return nullptr;
+    }
+
+    return result;
 }
 
 // JNI function implementations
@@ -197,20 +428,52 @@ Java_com_Rgibberlink_RgibberLinkJNI_getState(JNIEnv* env, jobject /* this */, jl
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_Rgibberlink_RgibberLinkJNI_receiveNonce(JNIEnv* env, jobject /* this */, jlong ptr, jbyteArray nonce) {
-    JNIGuard guard(g_protocol_mutex);
-    if (!ptr || !nonce) return nullptr;
+    if (!env) {
+        LOGE("Null JNIEnv in receiveNonce");
+        return nullptr;
+    }
+
+    JNIGuard guard(g_protocol_mutex, "receiveNonce");
+    if (!guard.locked_) {
+        LOGE("Failed to acquire mutex lock in receiveNonce");
+        return nullptr;
+    }
+
+    if (!validate_pointer(reinterpret_cast<void*>(ptr), "receiveNonce") ||
+        !validate_byte_array(env, nonce, "nonce", "receiveNonce")) {
+        return nullptr;
+    }
 
     try {
         auto nonce_data = get_byte_array_data(env, nonce);
+        if (nonce_data.empty()) {
+            LOGE("Empty nonce data in receiveNonce");
+            return nullptr;
+        }
+
+        // Validate nonce size (typically 32 bytes for cryptographic nonce)
+        if (nonce_data.size() != 32) {
+            LOGE("Invalid nonce size %zu in receiveNonce (expected 32)", nonce_data.size());
+            return nullptr;
+        }
+
         const char* result = gibberlink_receive_nonce(
             reinterpret_cast<void*>(ptr),
             nonce_data.data(),
             nonce_data.size()
         );
 
+        if (!result) {
+            LOGE("gibberlink_receive_nonce returned null");
+            return nullptr;
+        }
+
         return create_string(env, result);
     } catch (const std::exception& e) {
         LOGE("Receive nonce failed: %s", e.what());
+        return nullptr;
+    } catch (...) {
+        LOGE("Unknown exception occurred in receiveNonce");
         return nullptr;
     }
 }
@@ -275,10 +538,18 @@ Java_com_Rgibberlink_RgibberLinkJNI_encryptMessage(JNIEnv* env, jobject /* this 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_Rgibberlink_RgibberLinkJNI_decryptMessage(JNIEnv* env, jobject /* this */, jlong ptr, jbyteArray encryptedData) {
     JNIGuard guard(g_protocol_mutex);
-    if (!ptr || !encryptedData) return nullptr;
+    if (!validate_pointer(reinterpret_cast<void*>(ptr), "decryptMessage") ||
+        !validate_byte_array(env, encryptedData, "encryptedData", "decryptMessage")) {
+        return nullptr;
+    }
 
     try {
         auto encrypted_bytes = get_byte_array_data(env, encryptedData);
+        if (encrypted_bytes.empty()) {
+            LOGE("Empty encrypted data in decryptMessage");
+            return nullptr;
+        }
+
         size_t out_len = 0;
         uint8_t* result = gibberlink_decrypt_message(
             reinterpret_cast<void*>(ptr),
@@ -287,7 +558,7 @@ Java_com_Rgibberlink_RgibberLinkJNI_decryptMessage(JNIEnv* env, jobject /* this 
             &out_len
         );
 
-        if (!result) return nullptr;
+        if (!result || out_len == 0) return nullptr;
 
         jbyteArray array = create_byte_array(env, result, out_len);
         gibberlink_free_data(result);
@@ -301,10 +572,18 @@ Java_com_Rgibberlink_RgibberLinkJNI_decryptMessage(JNIEnv* env, jobject /* this 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_Rgibberlink_RgibberLinkJNI_sendAudioData(JNIEnv* env, jobject /* this */, jlong ptr, jbyteArray data) {
     JNIGuard guard(g_protocol_mutex);
-    if (!ptr || !data) return JNI_FALSE;
+    if (!validate_pointer(reinterpret_cast<void*>(ptr), "sendAudioData") ||
+        !validate_byte_array(env, data, "data", "sendAudioData")) {
+        return JNI_FALSE;
+    }
 
     try {
         auto data_bytes = get_byte_array_data(env, data);
+        if (data_bytes.empty()) {
+            LOGE("Empty audio data in sendAudioData");
+            return JNI_FALSE;
+        }
+
         return gibberlink_send_audio_data(
             reinterpret_cast<void*>(ptr),
             data_bytes.data(),
@@ -339,7 +618,9 @@ Java_com_Rgibberlink_RgibberLinkJNI_receiveAudioData(JNIEnv* env, jobject /* thi
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_Rgibberlink_RgibberLinkJNI_isReceiving(JNIEnv* env, jobject /* this */, jlong ptr) {
     JNIGuard guard(g_protocol_mutex);
-    if (!ptr) return JNI_FALSE;
+    if (!validate_pointer(reinterpret_cast<void*>(ptr), "isReceiving")) {
+        return JNI_FALSE;
+    }
 
     return gibberlink_is_receiving(reinterpret_cast<void*>(ptr)) ? JNI_TRUE : JNI_FALSE;
 }
@@ -347,10 +628,18 @@ Java_com_Rgibberlink_RgibberLinkJNI_isReceiving(JNIEnv* env, jobject /* this */,
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_Rgibberlink_RgibberLinkJNI_generateQrCode(JNIEnv* env, jobject /* this */, jlong ptr, jbyteArray payload) {
     JNIGuard guard(g_protocol_mutex);
-    if (!ptr || !payload) return nullptr;
+    if (!validate_pointer(reinterpret_cast<void*>(ptr), "generateQrCode") ||
+        !validate_byte_array(env, payload, "payload", "generateQrCode")) {
+        return nullptr;
+    }
 
     try {
         auto payload_data = get_byte_array_data(env, payload);
+        if (payload_data.empty()) {
+            LOGE("Empty payload data in generateQrCode");
+            return nullptr;
+        }
+
         const char* result = gibberlink_generate_qr_code(
             reinterpret_cast<void*>(ptr),
             payload_data.data(),
@@ -367,10 +656,18 @@ Java_com_Rgibberlink_RgibberLinkJNI_generateQrCode(JNIEnv* env, jobject /* this 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_Rgibberlink_RgibberLinkJNI_decodeQrCode(JNIEnv* env, jobject /* this */, jlong ptr, jbyteArray qrData) {
     JNIGuard guard(g_protocol_mutex);
-    if (!ptr || !qrData) return nullptr;
+    if (!validate_pointer(reinterpret_cast<void*>(ptr), "decodeQrCode") ||
+        !validate_byte_array(env, qrData, "qrData", "decodeQrCode")) {
+        return nullptr;
+    }
 
     try {
         auto qr_data = get_byte_array_data(env, qrData);
+        if (qr_data.empty()) {
+            LOGE("Empty QR data in decodeQrCode");
+            return nullptr;
+        }
+
         size_t out_len = 0;
         uint8_t* result = gibberlink_decode_qr_code(
             reinterpret_cast<void*>(ptr),
@@ -379,7 +676,7 @@ Java_com_Rgibberlink_RgibberLinkJNI_decodeQrCode(JNIEnv* env, jobject /* this */
             &out_len
         );
 
-        if (!result) return nullptr;
+        if (!result || out_len == 0) return nullptr;
 
         jbyteArray array = create_byte_array(env, result, out_len);
         gibberlink_free_data(result);
@@ -620,11 +917,24 @@ Java_com_Rgibberlink_RgibberLinkJNI_shutdownUltrasonicBeamEngine(JNIEnv* env, jo
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_Rgibberlink_RgibberLinkJNI_createLaserEngine(JNIEnv* env, jobject /* this */, jbyteArray config, jbyteArray rxConfig) {
     JNIGuard guard(g_laser_mutex);
-    if (!config || !rxConfig) return 0;
+    if (!validate_byte_array(env, config, "config", "createLaserEngine") ||
+        !validate_byte_array(env, rxConfig, "rxConfig", "createLaserEngine")) {
+        return 0;
+    }
 
     try {
         auto config_data = get_byte_array_data(env, config);
         auto rx_config_data = get_byte_array_data(env, rxConfig);
+
+        if (config_data.empty()) {
+            LOGE("Empty config data in createLaserEngine");
+            return 0;
+        }
+        if (rx_config_data.empty()) {
+            LOGE("Empty RX config data in createLaserEngine");
+            return 0;
+        }
+
         void* ptr = laser_engine_create(
             config_data.data(),
             config_data.size(),
@@ -695,7 +1005,10 @@ Java_com_Rgibberlink_RgibberLinkJNI_transmitLaserData(JNIEnv* env, jobject /* th
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_Rgibberlink_RgibberLinkJNI_receiveLaserData(JNIEnv* env, jobject /* this */, jlong ptr, jint timeoutMs) {
     JNIGuard guard(g_laser_mutex);
-    if (!ptr) return nullptr;
+    if (!validate_pointer(reinterpret_cast<void*>(ptr), "receiveLaserData") ||
+        !validate_timeout(timeoutMs, "receiveLaserData")) {
+        return nullptr;
+    }
 
     try {
         size_t out_len = 0;
@@ -705,7 +1018,7 @@ Java_com_Rgibberlink_RgibberLinkJNI_receiveLaserData(JNIEnv* env, jobject /* thi
             &out_len
         );
 
-        if (!result) return nullptr;
+        if (!result || out_len == 0) return nullptr;
 
         jbyteArray array = create_byte_array(env, result, out_len);
         gibberlink_free_data(result);
@@ -719,7 +1032,10 @@ Java_com_Rgibberlink_RgibberLinkJNI_receiveLaserData(JNIEnv* env, jobject /* thi
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_Rgibberlink_RgibberLinkJNI_setLaserIntensity(JNIEnv* env, jobject /* this */, jlong ptr, jfloat intensity) {
     JNIGuard guard(g_laser_mutex);
-    if (!ptr) return JNI_FALSE;
+    if (!validate_pointer(reinterpret_cast<void*>(ptr), "setLaserIntensity") ||
+        !validate_intensity(intensity, "setLaserIntensity")) {
+        return JNI_FALSE;
+    }
 
     try {
         return laser_engine_set_intensity(reinterpret_cast<void*>(ptr), intensity) ? JNI_TRUE : JNI_FALSE;
@@ -752,7 +1068,10 @@ Java_com_Rgibberlink_RgibberLinkJNI_getAlignmentStatus(JNIEnv* env, jobject /* t
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_Rgibberlink_RgibberLinkJNI_setAlignmentTarget(JNIEnv* env, jobject /* this */, jlong ptr, jfloat x, jfloat y) {
     JNIGuard guard(g_laser_mutex);
-    if (!ptr) return JNI_FALSE;
+    if (!validate_pointer(reinterpret_cast<void*>(ptr), "setAlignmentTarget") ||
+        !validate_alignment_coords(x, y, "setAlignmentTarget")) {
+        return JNI_FALSE;
+    }
 
     try {
         return laser_engine_set_alignment_target(reinterpret_cast<void*>(ptr), x, y) ? JNI_TRUE : JNI_FALSE;
@@ -765,7 +1084,10 @@ Java_com_Rgibberlink_RgibberLinkJNI_setAlignmentTarget(JNIEnv* env, jobject /* t
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_Rgibberlink_RgibberLinkJNI_autoAlign(JNIEnv* env, jobject /* this */, jlong ptr, jint maxAttempts) {
     JNIGuard guard(g_laser_mutex);
-    if (!ptr) return JNI_FALSE;
+    if (!validate_pointer(reinterpret_cast<void*>(ptr), "autoAlign") ||
+        !validate_max_attempts(maxAttempts, "autoAlign")) {
+        return JNI_FALSE;
+    }
 
     try {
         return laser_engine_auto_align(reinterpret_cast<void*>(ptr), maxAttempts) ? JNI_TRUE : JNI_FALSE;
@@ -1097,7 +1419,18 @@ Java_com_Rgibberlink_RgibberLinkJNI_getMeasurementHistorySize(JNIEnv* env, jobje
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_Rgibberlink_RgibberLinkJNI_getMeasurementHistory(JNIEnv* env, jobject /* this */, jlong ptr, jint index, jfloatArray outDistance, jfloatArray outStrength, jfloatArray outQuality, jlongArray outTimestamp) {
     JNIGuard guard(g_range_detector_mutex);
-    if (!ptr || !outDistance || !outStrength || !outQuality || !outTimestamp) return JNI_FALSE;
+    if (!validate_pointer(reinterpret_cast<void*>(ptr), "getMeasurementHistory") ||
+        !validate_float_array(env, outDistance, 1, "outDistance", "getMeasurementHistory") ||
+        !validate_float_array(env, outStrength, 1, "outStrength", "getMeasurementHistory") ||
+        !validate_float_array(env, outQuality, 1, "outQuality", "getMeasurementHistory") ||
+        !validate_long_array(env, outTimestamp, 1, "outTimestamp", "getMeasurementHistory")) {
+        return JNI_FALSE;
+    }
+
+    if (index < 0) {
+        LOGE("Invalid history index %d in getMeasurementHistory", index);
+        return JNI_FALSE;
+    }
 
     try {
         float distance, strength, quality;
@@ -1110,9 +1443,29 @@ Java_com_Rgibberlink_RgibberLinkJNI_getMeasurementHistory(JNIEnv* env, jobject /
 
         if (result) {
             env->SetFloatArrayRegion(outDistance, 0, 1, &distance);
+            if (env->ExceptionCheck()) {
+                LOGE("Exception setting distance array in getMeasurementHistory");
+                env->ExceptionClear();
+                return JNI_FALSE;
+            }
             env->SetFloatArrayRegion(outStrength, 0, 1, &strength);
+            if (env->ExceptionCheck()) {
+                LOGE("Exception setting strength array in getMeasurementHistory");
+                env->ExceptionClear();
+                return JNI_FALSE;
+            }
             env->SetFloatArrayRegion(outQuality, 0, 1, &quality);
+            if (env->ExceptionCheck()) {
+                LOGE("Exception setting quality array in getMeasurementHistory");
+                env->ExceptionClear();
+                return JNI_FALSE;
+            }
             env->SetLongArrayRegion(outTimestamp, 0, 1, &timestamp);
+            if (env->ExceptionCheck()) {
+                LOGE("Exception setting timestamp array in getMeasurementHistory");
+                env->ExceptionClear();
+                return JNI_FALSE;
+            }
         }
 
         return result ? JNI_TRUE : JNI_FALSE;

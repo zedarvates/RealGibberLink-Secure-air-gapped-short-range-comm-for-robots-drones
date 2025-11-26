@@ -78,14 +78,8 @@ class PermissionAuthorizationActivity : AppCompatActivity() {
     private lateinit var durationGroup: RadioGroup
     private lateinit var scopeGroup: RadioGroup
 
-    // Preferences
-    private lateinit var prefs: android.content.SharedPreferences
-
-    // Biometric
-    private lateinit var biometricPrompt: BiometricPrompt
-    private lateinit var promptInfo: BiometricPrompt.PromptInfo
-    private var biometricAvailable = false
-    private var requiresBiometric = false
+    // Managers
+    private lateinit var permissionManager: PermissionManager
 
     // Connection data from intent
     private var peerIdentity = "GL-AB12-CDEF"
@@ -93,12 +87,13 @@ class PermissionAuthorizationActivity : AppCompatActivity() {
     private var estimatedAngle = 12.0f
     private var irOk = true
     private var ultrasoundOk = true
+    private var requiresBiometric = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_permission_authorization)
 
-        prefs = getSharedPreferences("gibberlink_auth", Context.MODE_PRIVATE)
+        permissionManager = PermissionManager(this)
 
         // Get connection data from intent
         peerIdentity = intent.getStringExtra("peer_identity") ?: peerIdentity
@@ -107,43 +102,12 @@ class PermissionAuthorizationActivity : AppCompatActivity() {
         irOk = intent.getBooleanExtra("ir_ok", irOk)
         ultrasoundOk = intent.getBooleanExtra("ultrasound_ok", ultrasoundOk)
 
-        initBiometric()
         initializeViews()
         setupSecurityPolicies()
         checkLockoutStatus()
         updatePinHint()
     }
 
-    private fun initBiometric() {
-        val biometricManager = BiometricManager.from(this)
-        biometricAvailable = when (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)) {
-            BiometricManager.BIOMETRIC_SUCCESS -> true
-            else -> false
-        }
-
-        if (biometricAvailable) {
-            val executor: Executor = ContextCompat.getMainExecutor(this)
-            biometricPrompt = BiometricPrompt(this, executor,
-                object : BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                        super.onAuthenticationSucceeded(result)
-                        onBiometricSuccess()
-                    }
-
-                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                        super.onAuthenticationError(errorCode, errString)
-                        Toast.makeText(this@PermissionAuthorizationActivity,
-                            "Biometric authentication failed", Toast.LENGTH_SHORT).show()
-                    }
-                })
-
-            promptInfo = BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Confirm Sensitive Permissions")
-                .setSubtitle("Use biometric authentication for enhanced security")
-                .setNegativeButtonText("Use PIN")
-                .build()
-        }
-    }
 
     private fun initializeViews() {
         peerFingerprint = findViewById(R.id.peerFingerprint)
@@ -218,8 +182,9 @@ class PermissionAuthorizationActivity : AppCompatActivity() {
     }
 
     private fun updateBiometricRequirement() {
-        requiresBiometric = permissionCommands.isChecked || permissionAccessAuth.isChecked
-        biometricNotice.visibility = if (biometricAvailable && requiresBiometric) View.VISIBLE else View.GONE
+        val permissions = collectSelectedPermissions()
+        requiresBiometric = permissionManager.shouldUseBiometric(permissions)
+        biometricNotice.visibility = if (permissionManager.isBiometricAvailable() && requiresBiometric) View.VISIBLE else View.GONE
     }
 
     private fun updateSecurityWarnings() {
@@ -247,26 +212,16 @@ class PermissionAuthorizationActivity : AppCompatActivity() {
     }
 
     private fun checkLockoutStatus() {
-        val failedAttempts = prefs.getInt(PREF_FAILED_ATTEMPTS, 0)
-        val lockoutTime = prefs.getLong(PREF_LOCKOUT_TIME, 0)
-
-        if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
-            val timeSinceLockout = System.currentTimeMillis() - lockoutTime
-            if (timeSinceLockout < LOCKOUT_DURATION_MS) {
-                lockDevice()
-                return
-            } else {
-                // Lockout period passed, reset
-                prefs.edit()
-                    .putInt(PREF_FAILED_ATTEMPTS, 0)
-                    .putLong(PREF_LOCKOUT_TIME, 0)
-                    .apply()
-            }
+        if (permissionManager.isDeviceLocked()) {
+            lockDevice()
+            return
         }
 
+        val remainingAttempts = permissionManager.getRemainingAttempts()
+        val failedAttempts = PermissionManager.MAX_FAILED_ATTEMPTS - remainingAttempts
         if (failedAttempts > 0) {
-            lockoutWarning.text = "🔐 Incorrect PIN attempts: $failedAttempts/$MAX_FAILED_ATTEMPTS"
-            lockoutWarning.visibility = if (failedAttempts >= MAX_FAILED_ATTEMPTS - 1) View.VISIBLE else View.GONE
+            lockoutWarning.text = "🔐 Incorrect PIN attempts: $failedAttempts/${PermissionManager.MAX_FAILED_ATTEMPTS}"
+            lockoutWarning.visibility = if (failedAttempts >= PermissionManager.MAX_FAILED_ATTEMPTS - 1) View.VISIBLE else View.GONE
         }
     }
 
@@ -290,14 +245,21 @@ class PermissionAuthorizationActivity : AppCompatActivity() {
     private fun handleAuthorization() {
         val enteredPin = pinInput.text.toString()
 
-        if (!validatePin(enteredPin)) {
+        if (!permissionManager.validatePin(enteredPin)) {
             handleFailedPinAttempt()
             return
         }
 
         // Check biometric requirement for sensitive permissions
-        if (requiresBiometric && biometricAvailable) {
-            biometricPrompt.authenticate(promptInfo)
+        if (requiresBiometric && permissionManager.isBiometricAvailable()) {
+            permissionManager.authenticateWithBiometric { success ->
+                if (success) {
+                    completeAuthorization()
+                } else {
+                    Toast.makeText(this@PermissionAuthorizationActivity,
+                        "Biometric authentication failed", Toast.LENGTH_SHORT).show()
+                }
+            }
             return // Wait for biometric callback
         }
 
@@ -305,37 +267,14 @@ class PermissionAuthorizationActivity : AppCompatActivity() {
         completeAuthorization()
     }
 
-    private fun validatePin(pin: String): Boolean {
-        if (pin.length != 4 || !pin.all { it.isDigit() }) {
-            Toast.makeText(this, "PIN must be 4 digits", Toast.LENGTH_SHORT).show()
-            return false
-        }
 
-        val storedPin = prefs.getString(PREF_PIN, PREF_DEFAULT_PIN) ?: PREF_DEFAULT_PIN
-        return storedPin == pin
+    private fun updateLockoutWarning() {
+        val remainingAttempts = permissionManager.getRemainingAttempts()
+        val failedAttempts = PermissionManager.MAX_FAILED_ATTEMPTS - remainingAttempts
+        lockoutWarning.text = "🔐 Incorrect PIN attempts: $failedAttempts/${PermissionManager.MAX_FAILED_ATTEMPTS}"
+        lockoutWarning.visibility = if (failedAttempts >= PermissionManager.MAX_FAILED_ATTEMPTS - 1) View.VISIBLE else View.GONE
     }
 
-    private fun handleFailedPinAttempt() {
-        val failedAttempts = prefs.getInt(PREF_FAILED_ATTEMPTS, 0) + 1
-
-        prefs.edit()
-            .putInt(PREF_FAILED_ATTEMPTS, failedAttempts)
-            .apply()
-
-        if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
-            prefs.edit().putLong(PREF_LOCKOUT_TIME, System.currentTimeMillis()).apply()
-            lockDevice()
-        } else {
-            val remaining = MAX_FAILED_ATTEMPTS - failedAttempts
-            Toast.makeText(this, "Incorrect PIN. $remaining attempts remaining", Toast.LENGTH_SHORT).show()
-            updateLockoutWarning(failedAttempts)
-        }
-    }
-
-    private fun updateLockoutWarning(attempts: Int) {
-        lockoutWarning.text = "🔐 Incorrect PIN attempts: $attempts/$MAX_FAILED_ATTEMPTS"
-        lockoutWarning.visibility = if (attempts >= MAX_FAILED_ATTEMPTS - 1) View.VISIBLE else View.GONE
-    }
 
     private fun onBiometricSuccess() {
         completeAuthorization()
@@ -343,17 +282,15 @@ class PermissionAuthorizationActivity : AppCompatActivity() {
 
     private fun completeAuthorization() {
         // Reset failed attempts on success
-        prefs.edit()
-            .putInt(PREF_FAILED_ATTEMPTS, 0)
-            .putLong(PREF_LOCKOUT_TIME, 0)
-            .apply()
+        permissionManager.resetFailedAttempts()
 
+        val permissions = collectSelectedPermissions()
         // Check if face validation is required for sensitive permissions
-        if (requiresSensitivePermissions() && isFaceValidationEnabled()) {
+        if (permissionManager.isFaceValidationRequired(permissions) && permissionManager.isFaceValidationEnabled()) {
             // Request face validation before completing authorization
             requestFaceValidation { success ->
                 if (success) {
-                    completeAuthorization()
+                    completeAuthorizationFinal()
                 } else {
                     // Show error and allow retry or cancel
                     showFaceValidationFailed()
@@ -363,7 +300,7 @@ class PermissionAuthorizationActivity : AppCompatActivity() {
         }
 
         // No face validation required, proceed normally
-        completeAuthorization()
+        completeAuthorizationFinal()
     }
 
     private fun denyAuthorization() {
@@ -375,66 +312,45 @@ class PermissionAuthorizationActivity : AppCompatActivity() {
         finish()
     }
 
+    private fun collectSelectedPermissions(): List<String> {
+        val permissions = mutableListOf<String>()
+        if (permissionDiscussions.isChecked) permissions.add(PermissionManager.PERMISSION_DISCUSSIONS)
+        if (permissionAccessAuth.isChecked) permissions.add(PermissionManager.PERMISSION_ACCESS_AUTH)
+        if (permissionCommands.isChecked) permissions.add(PermissionManager.PERMISSION_COMMANDS)
+        if (permissionCouplings.isChecked) permissions.add(PermissionManager.PERMISSION_COUPLINGS)
+        if (permissionOthers.isChecked) permissions.add(PermissionManager.PERMISSION_OTHERS)
+        return permissions
+    }
+
     private fun collectAuthorizationData(): AuthorizationData {
         val duration = when (durationGroup.checkedRadioButtonId) {
-            R.id.duration30s -> DURATION_30S
-            R.id.duration5min -> DURATION_5MIN
-            R.id.duration30min -> DURATION_30MIN
-            R.id.durationSession -> DURATION_SESSION
-            else -> DURATION_5MIN
+            R.id.duration30s -> PermissionManager.DURATION_30S
+            R.id.duration5min -> PermissionManager.DURATION_5MIN
+            R.id.duration30min -> PermissionManager.DURATION_30MIN
+            R.id.durationSession -> PermissionManager.DURATION_SESSION
+            else -> PermissionManager.DURATION_5MIN
         }
 
         val scope = when (scopeGroup.checkedRadioButtonId) {
-            R.id.scopeThisNode -> SCOPE_THIS_NODE
-            R.id.scopeThisGroup -> SCOPE_THIS_GROUP
-            R.id.scopeAllVisible -> SCOPE_ALL_VISIBLE
-            else -> SCOPE_THIS_NODE
+            R.id.scopeThisNode -> PermissionManager.SCOPE_THIS_NODE
+            R.id.scopeThisGroup -> PermissionManager.SCOPE_THIS_GROUP
+            R.id.scopeAllVisible -> PermissionManager.SCOPE_ALL_VISIBLE
+            else -> PermissionManager.SCOPE_THIS_NODE
         }
 
-        val permissions = mutableListOf<String>()
-        if (permissionDiscussions.isChecked) permissions.add(PERMISSION_DISCUSSIONS)
-        if (permissionAccessAuth.isChecked) permissions.add(PERMISSION_ACCESS_AUTH)
-        if (permissionCommands.isChecked) permissions.add(PERMISSION_COMMANDS)
-        if (permissionCouplings.isChecked) permissions.add(PERMISSION_COUPLINGS)
-        if (permissionOthers.isChecked) permissions.add(PERMISSION_OTHERS)
+        val permissions = permissionManager.validatePermissions(collectSelectedPermissions())
+        val biometricUsed = requiresBiometric && permissionManager.isBiometricAvailable()
 
-        return AuthorizationData(
+        return permissionManager.createAuthorizationData(
             peerIdentity = peerIdentity,
             permissions = permissions,
-            durationSeconds = duration,
+            duration = duration,
             scope = scope,
-            grantedAt = System.currentTimeMillis(),
-            biometricUsed = requiresBiometric && biometricAvailable
+            biometricUsed = biometricUsed
         )
     }
-
-    private fun checkPinChangeRequirement() {
-        val enteredPin = pinInput.text.toString()
-        val pinChanged = prefs.getBoolean(PREF_PIN_CHANGED, false)
-
-        if (!pinChanged) {
-            if (enteredPin != PREF_DEFAULT_PIN) {
-                // User changed PIN, mark as changed
-                prefs.edit()
-                    .putString(PREF_PIN, enteredPin)
-                    .putBoolean(PREF_PIN_CHANGED, true)
-                    .apply()
-                Toast.makeText(this, "PIN changed successfully", Toast.LENGTH_SHORT).show()
-            } else {
-                // Still using default, prompt to change
-                Toast.makeText(this, "Please change your PIN from the default", Toast.LENGTH_LONG).show()
-            }
-        }
     }
 
-    private fun requiresSensitivePermissions(): Boolean {
-        return permissionCommands.isChecked || permissionAccessAuth.isChecked || permissionCouplings.isChecked
-    }
-
-    private fun isFaceValidationEnabled(): Boolean {
-        val appPrefs = getSharedPreferences("gibberlink_app", Context.MODE_PRIVATE)
-        return appPrefs.getBoolean("face_validation_enabled", false)
-    }
 
     private fun requestFaceValidation(callback: (Boolean) -> Unit) {
         val intent = Intent(this, FaceValidationActivity::class.java)
@@ -477,7 +393,8 @@ class PermissionAuthorizationActivity : AppCompatActivity() {
 
     private fun completeAuthorizationFinal() {
         // Check if this is first PIN change
-        checkPinChangeRequirement()
+        val enteredPin = pinInput.text.toString()
+        permissionManager.checkPinChangeRequirement(enteredPin)
 
         // Collect authorization data
         val authData = collectAuthorizationData()
@@ -490,14 +407,9 @@ class PermissionAuthorizationActivity : AppCompatActivity() {
         setResult(RESULT_OK, intent)
 
         // Log authentication for audit
-        logAuthenticationEvent(authData, true)
+        permissionManager.logAuthenticationEvent(authData, true)
 
         finish()
-    }
-
-    private fun logAuthenticationEvent(authData: AuthorizationData, granted: Boolean) {
-        // In a full implementation, this would integrate with the signed logging system
-        Log.i(TAG, "Authorization ${if (granted) "granted" else "denied"} for peer $peerIdentity with permissions: ${authData.permissions}")
     }
 }
 
